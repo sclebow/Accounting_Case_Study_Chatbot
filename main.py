@@ -2,7 +2,7 @@
 # The application uses the Cloudflare Workers Service to serve chat requests and interact with the OpenAI API.
 
 import streamlit as st
-from openai import OpenAI
+from openai import APIStatusError, OpenAI, RateLimitError
 
 print("\n" * 5)
 print("Starting Accounting Case Study Chatbot...")
@@ -82,15 +82,30 @@ with cols[1]:
 
                 print("Sending request to Cloudflare Workers Service with prompt:", prompt)
 
-                response = client.chat.completions.create(
-                    model=MODEL_OPTIONS[st.session_state["selected_model"]],
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": f"Case Study Text:\n{case_study_text}\n\nUser Question:\n{user_input}"}
-                    ],
-                    stream=True,
-                )
+                try:
+                    response = client.chat.completions.create(
+                        model=MODEL_OPTIONS[st.session_state["selected_model"]],
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": f"Case Study Text:\n{case_study_text}\n\nUser Question:\n{user_input}"}
+                        ],
+                        stream=True,
+                    )
 
-                assistant_response = response_placeholder.write_stream(response)
+                    assistant_response = response_placeholder.write_stream(response)
+                except (RateLimitError, APIStatusError) as error:
+                    error_text = str(error).lower()
+                    limit_reached = any(
+                        phrase in error_text
+                        for phrase in ("rate limit", "rate_limit", "quota", "credit", "credits")
+                    )
 
-        st.session_state["messages"].append({"role": "assistant", "content": assistant_response})
+                    if limit_reached or getattr(error, "status_code", None) in (402, 429):
+                        error_message = "The service has reached its usage limit. Please try again tomorrow."
+                    else:
+                        error_message = "The service could not process your request. Please try again later."
+
+                    response_placeholder.error(error_message)
+                    st.toast(error_message, icon=":material/error:")
+                else:
+                    st.session_state["messages"].append({"role": "assistant", "content": assistant_response})
